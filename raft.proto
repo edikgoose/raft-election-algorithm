@@ -1,0 +1,40 @@
+syntax = "proto3";
+// python3 -m grpc_tools.protoc raft.proto --proto_path=. --python_out=. --grpc_python_out=.
+
+service RaftElectionService {
+  rpc RequestVote(VoteRequest) returns (VoteResponse);
+  rpc AppendEntries(AppendRequest) returns (AppendResponse);
+  rpc GetLeader(Void) returns (GetLeaderResponse);
+  rpc Suspend(SuspendRequest) returns (Void);
+}
+
+message VoteRequest {
+  uint64 candidateTerm = 1;
+  uint64 candidateId = 2;
+}
+
+message VoteResponse {
+  uint64 term = 1;
+  bool result = 2;
+}
+
+message AppendRequest {
+  uint64 leaderTerm = 1;
+  uint64 leaderId = 2;
+}
+
+message AppendResponse {
+  uint64 term = 1;
+  bool success = 2;
+}
+
+message Void {}
+
+message GetLeaderResponse {
+  uint64 nodeId = 1;
+  string nodeAddress = 2;
+}
+
+message SuspendRequest {
+  uint64 period = 1;
+}
