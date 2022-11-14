@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 HEARTBEAT_INTERVAL = 50  # ms
-ELECTION_INTERVAL = 200, 300  # ms
+ELECTION_INTERVAL = 300, 600  # ms
 
 
 def parse_server_config(config: str) -> (int, str):
@@ -46,12 +46,13 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.election_timer = None
         self.current_vote = None
         self.start_following()
+        self.leader_id = None
+        self.leader_address = None
         super().__init__()
 
     def start_election_timer(self) -> threading.Timer:
         """ Unit of timeout is ms """
         election_timer = threading.Timer(self.election_timeout / 1000, self.start_election)
-        logger.info("Start election timer")
         election_timer.start()
         return election_timer
 
@@ -120,6 +121,9 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def start_leading(self):
         logger.info(f"I am a leader. Term: {self.current_term}")
         self.state = "leader"
+        self.leader_id = self.server_id
+        self.leader_address = self.server_address
+
         timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeats)
         timer.start()
         while self.state == "leader":
@@ -127,11 +131,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         timer.cancel()
 
     def send_heartbeats(self):
-        logger.info("Send heartbeats to servers")
         threads = []
 
         for _, server_address in self.servers.items():
             thread = threading.Thread(target=self.send_heartbeat, args=(server_address,))
+            thread.setDaemon(True)
             threads.append(thread)
             thread.start()
 
@@ -165,10 +169,12 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             return pb.VoteResponse(term=self.current_term, result=False)
 
     def AppendEntries(self, request: pb.AppendRequest, context):
-        logger.info(
-            f"({self.current_term}) AppendEntries: leaderId={request.leaderId}, leaderTerm={request.leaderTerm}")
-        self.election_timer.cancel()
-        self.election_timer = self.start_election_timer()
+        if self.state == "follower":
+            self.election_timer.cancel()
+            self.election_timer = self.start_election_timer()
+
+        self.leader_id = request.leaderId
+        self.leader_address = self.servers[request.leaderId]
 
         if request.leaderTerm >= self.current_term:
             self.current_term = request.leaderTerm
@@ -177,8 +183,12 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             return pb.AppendResponse(term=self.current_term, success=False)
 
     def GetLeader(self, request, context):
-        logger.info(f"({self.current_term}) GetLeader")
-        return super().GetLeader(request, context)
+        if self.state == "candidate":
+            if self.current_vote is None:
+                return pb.GetLeaderResponse(nodeId=None, nodeAdress=None)
+            else:
+                return pb.GetLeaderResponse(nodeId=self.current_vote, nodeAddress=self.servers[self.current_vote])
+        return pb.GetLeaderResponse(nodeId=self.leader_id, nodeAddress=self.leader_address)
 
     def Suspend(self, request, context):
         logger.info(f"({self.current_term}) Suspend")
