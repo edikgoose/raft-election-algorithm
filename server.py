@@ -3,7 +3,9 @@ import multiprocessing
 import random
 import sys
 import threading
+import time
 from concurrent import futures
+from typing import Callable
 
 import grpc
 import raft_pb2 as pb
@@ -12,8 +14,8 @@ import raft_pb2_grpc as pb_grpc
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-HEARTBEAT_INTERVAL = 50  # ms
-ELECTION_INTERVAL = 300, 600  # ms
+HEARTBEAT_INTERVAL = 50         # ms
+ELECTION_INTERVAL = 300, 600    # ms
 
 
 def parse_server_config(config: str) -> (int, str):
@@ -23,6 +25,15 @@ def parse_server_config(config: str) -> (int, str):
 
 def generate_random_timeout() -> int:
     return random.randint(ELECTION_INTERVAL[0], ELECTION_INTERVAL[1])
+
+
+def handle_rpc_error(func):
+    def wrapper(*args, **kwargs):
+        try:
+            func(*args, **kwargs)
+        except grpc.RpcError as e:
+            logger.error(e)
+    return wrapper
 
 
 # noinspection PyUnresolvedReferences
@@ -156,6 +167,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         except Exception:
             pass
 
+    @handle_rpc_error
     def RequestVote(self, request, context):
         if request.candidateTerm > self.current_term or \
                 (request.candidateTerm == self.current_term and
@@ -168,20 +180,25 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         else:
             return pb.VoteResponse(term=self.current_term, result=False)
 
+    @handle_rpc_error
     def AppendEntries(self, request: pb.AppendRequest, context):
-        if self.state == "follower":
-            self.election_timer.cancel()
-            self.election_timer = self.start_election_timer()
+        try:
+            if self.state == "follower":
+                self.election_timer.cancel()
+                self.election_timer = self.start_election_timer()
 
-        self.leader_id = request.leaderId
-        self.leader_address = self.servers[request.leaderId]
+            self.leader_id = request.leaderId
+            self.leader_address = self.servers[request.leaderId]
 
-        if request.leaderTerm >= self.current_term:
-            self.current_term = request.leaderTerm
-            return pb.AppendResponse(term=self.current_term, success=True)
-        else:
-            return pb.AppendResponse(term=self.current_term, success=False)
+            if request.leaderTerm >= self.current_term:
+                self.current_term = request.leaderTerm
+                return pb.AppendResponse(term=self.current_term, success=True)
+            else:
+                return pb.AppendResponse(term=self.current_term, success=False)
+        except grpc.RpcError as e:
+            logging.error(e)
 
+    @handle_rpc_error
     def GetLeader(self, request, context):
         if self.state == "candidate":
             if self.current_vote is None:
@@ -191,8 +208,43 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         return pb.GetLeaderResponse(nodeId=self.leader_id, nodeAddress=self.leader_address)
 
     def Suspend(self, request, context):
+        pass
+
+
+class SuspendableRaftElectionService(RaftElectionService):
+
+    def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
+        super().__init__(server_id, server_address, servers)
+        self.suspended = False
+
+    def RequestVote(self, request, context):
+        return self.__wrap_with_suspend(super().RequestVote, request, context)
+
+    def AppendEntries(self, request: pb.AppendRequest, context):
+        return self.__wrap_with_suspend(super().AppendEntries, request, context)
+
+    def GetLeader(self, request, context):
+        return self.__wrap_with_suspend(super().GetLeader, request, context)
+
+    def Suspend(self, request, context):
+        return self.__wrap_with_suspend(self.__suspend, request, context)
+
+    # noinspection PyUnusedLocal
+    @handle_rpc_error
+    def __suspend(self, request, context):
         logger.info(f"({self.current_term}) Suspend")
-        return super().Suspend(request, context)
+        period = request.period
+        self.suspended = True
+        time.sleep(period)
+
+    def __wrap_with_suspend(self, func: Callable, request, context):
+        if self.suspended:
+            msg = "Server is suspended"
+            context.set_details(msg)
+            context.set_code(grpc.StatusCode.UNAVAILABLE)
+            return pb.Void()
+        else:
+            return func(request, context)
 
 
 def start_server():
@@ -212,7 +264,9 @@ def start_server():
     server.add_insecure_port(needed_server_address)
     logger.info(f"The server starts at {needed_server_address}")
     pb_grpc.add_RaftElectionServiceServicer_to_server(
-        RaftElectionService(needed_server_id, needed_server_address, servers), server)
+        SuspendableRaftElectionService(needed_server_id, needed_server_address, servers),
+        server
+    )
     server.start()
     server.wait_for_termination()
 
