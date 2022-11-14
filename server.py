@@ -12,8 +12,8 @@ import raft_pb2_grpc as pb_grpc
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-HEARTBEAT_INTERVAL = 50         # ms
-ELECTION_INTERVAL = 3000, 4000  # ms
+HEARTBEAT_INTERVAL = 50  # ms
+ELECTION_INTERVAL = 200, 300  # ms
 
 
 def parse_server_config(config: str) -> (int, str):
@@ -73,11 +73,18 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         number_of_voted = 1  # because server initially votes for itself
 
         queue = multiprocessing.Queue()
+        threads = []
 
         for _, server_address in self.servers.items():
+            thread = threading.Thread(target=self.request_election_vote, args=(server_address, queue))
+            thread.setDaemon(True)
+            threads.append(thread)
             if self.state != "candidate":
                 return
-            self.request_election_vote(server_address, queue)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
 
         logger.info(f"Votes received")
         while not queue.empty():
@@ -113,27 +120,37 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def start_leading(self):
         logger.info(f"I am a leader. Term: {self.current_term}")
         self.state = "leader"
-        timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeat)
+        timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeats)
         timer.start()
         while self.state == "leader":
             pass
         timer.cancel()
 
-    def send_heartbeat(self):
+    def send_heartbeats(self):
         logger.info("Send heartbeats to servers")
+        threads = []
+
         for _, server_address in self.servers.items():
-            channel = grpc.insecure_channel(server_address)
-            client_stub = pb_grpc.RaftElectionServiceStub(channel)
-            # noinspection PyBroadException
-            try:
-                result = client_stub.AppendEntries(
-                    pb.AppendRequest(leaderTerm=self.current_term, leaderId=self.server_id))
-                if not result.success:
-                    self.current_term = result.term
-                    self.state = "follower"
-                    return
-            except Exception:
-                pass
+            thread = threading.Thread(target=self.send_heartbeat, args=(server_address,))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+    def send_heartbeat(self, server_address):
+        channel = grpc.insecure_channel(server_address)
+        client_stub = pb_grpc.RaftElectionServiceStub(channel)
+        # noinspection PyBroadException
+        try:
+            result = client_stub.AppendEntries(
+                pb.AppendRequest(leaderTerm=self.current_term, leaderId=self.server_id))
+            if not result.success:
+                self.current_term = result.term
+                self.state = "follower"
+                return
+        except Exception:
+            pass
 
     def RequestVote(self, request, context):
         if request.candidateTerm > self.current_term or \
