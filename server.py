@@ -1,60 +1,3 @@
-# def start_election_timer(self, timeout: int) -> threading.Timer:
-#     """ Unit of timeout is ms """
-#     election_timer = threading.Timer(timeout / 1000, self.start_election_thread)
-#     logger.info("Start election timer")
-#     election_timer.start()
-#     return election_timer
-# def start_election_thread(self) -> None:
-#     thread = threading.Thread(target=self.start_election)
-#     thread.start()
-#
-#
-# def start_election(self) -> None:
-#     logger.info("Election Timeout. Start election")
-#     self.state = "candidate"
-#     self.current_vote = self.server_id
-#     number_of_voted = 1  # 1 because server initially votes for itself
-#
-#     vote_
-#     for _, address in self.servers.items():
-#         thread = threading.Thread(target=self.request_election_vote, args=address)
-#         thread.start()
-#         thread.join()
-#
-#     for vote_result in vote_results:
-#         if vote_result is None:  # if server is not responding
-#             continue
-#
-#         if vote_result.term > self.current_term:
-#             self.current_term = vote_result.term
-#             self.start_following()
-#             self.current_vote = None
-#             return
-#         if vote_result.result:
-#             number_of_voted += 1
-#     if number_of_voted > (len(self.servers) + 1) / 2:
-#         logger.info("The election is win. Current server becomes the leader")
-#         self.start_leading()
-#     else:
-#         logger.info("The election is lose. Current server generates new timeout and becomes the follower")
-#     self.election_timeout = generate_random_timeout()
-#     self.start_following()
-#
-#
-# def request_election_vote(self, address: str) -> None:
-#     channel = grpc.insecure_channel(address)
-#     client_stub = pb_grpc.RaftElectionServiceStub(channel)
-#     try:
-#         result = client_stub.RequestVote(
-#             pb.VoteRequest(candidateTerm=self.current_term, candidateId=self.server_id))
-#         print(f"Request vote result: {result.term}, {result.result}")
-#     except Exception as ex:
-#         logger.info(f"The server: {address} is not responding.")
-#
-#
-# def start_leading(self):
-#     logger.info("LEADING")
-#     pass
 import multiprocessing
 import random
 import sys
@@ -69,11 +12,11 @@ import raft_pb2_grpc as pb_grpc
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-HEARTBEAT_INTERVAL = 50  # ms
+HEARTBEAT_INTERVAL = 50         # ms
 ELECTION_INTERVAL = 3000, 4000  # ms
 
 
-def parse_server_config(config: str) -> tuple[int, str]:
+def parse_server_config(config: str) -> (int, str):
     params = config.split()
     return int(params[0]), f"{params[1]}:{params[2]}"
 
@@ -82,7 +25,10 @@ def generate_random_timeout() -> int:
     return random.randint(ELECTION_INTERVAL[0], ELECTION_INTERVAL[1])
 
 
+# noinspection PyUnresolvedReferences
 class RepeatTimer(threading.Timer):
+    """ Taken from https://stackoverflow.com/a/48741004/11825114 """
+
     def run(self) -> None:
         while not self.finished.wait(self.interval):
             self.function(*self.args, **self.kwargs)
@@ -161,8 +107,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 pb.VoteRequest(candidateTerm=self.current_term, candidateId=self.server_id))
             logger.info(f"The server: {address} vote is: {result.term}, {result.result}")
             queue.put(result)
-        except Exception as ex:
-            logger.info(f"The server: {address} is not responding.")
+        except Exception as e:
+            logger.info(f"The server: {address} is not responding:\n{e}")
 
     def start_leading(self):
         self.state = "leader"
@@ -185,8 +131,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                     self.current_term = result.term
                     self.state = "follower"
                     return
-            except Exception as ex:
-                logger.info(f"The server: {server_address} is not responding.")
+            except Exception as e:
+                logger.info(f"The server: {server_address} is not responding:\n{e}")
 
     def RequestVote(self, request, context):
         # logger.info(f"({self.current_term}) RequestVote from: {request.candidateId}")
