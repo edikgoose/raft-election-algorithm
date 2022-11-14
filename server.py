@@ -57,33 +57,35 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def start_following(self):
         self.state = "follower"
+        logger.info(f"I am a follower. Term: {self.current_term}")
         self.election_timer = self.start_election_timer()
 
     def start_election(self):
-        logger.info("Election Timeout! The election has started")
+        logger.info("The leader is dead")
+        logger.info(f"I am a candidate. Term: {self.current_term}")
         if self.state != "follower":
             return
 
         self.state = "candidate"
         self.current_term += 1
         self.current_vote = self.server_id
+        logger.info(f"Voted for node: {self.server_id}")
         number_of_voted = 1  # because server initially votes for itself
 
         queue = multiprocessing.Queue()
 
         for _, server_address in self.servers.items():
             if self.state != "candidate":
-                logger.info("The server is no longer a candidate. The election is canceled")
                 return
             self.request_election_vote(server_address, queue)
 
+        logger.info(f"Votes received")
         while not queue.empty():
             vote_result = queue.get()
             if vote_result is None:  # if server is not responding
                 continue
 
             if vote_result.term > self.current_term:
-                logger.info("The candidate term is greater than the current. The server becomes follower")
                 self.current_term = vote_result.term
                 self.current_vote = None
                 self.start_following()
@@ -92,10 +94,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 number_of_voted += 1
 
         if number_of_voted > (len(self.servers) + 1) / 2:
-            logger.info(f"({self.current_term}) The election is win. Current server becomes the leader")
             self.start_leading()
         else:
-            logger.info("The election is lose. Current server generates new timeout and becomes the follower")
             self.election_timeout = generate_random_timeout()
             self.start_following()
 
@@ -105,12 +105,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         try:
             result = client_stub.RequestVote(
                 pb.VoteRequest(candidateTerm=self.current_term, candidateId=self.server_id))
-            logger.info(f"The server: {address} vote is: {result.term}, {result.result}")
             queue.put(result)
-        except Exception as e:
-            logger.info(f"The server: {address} is not responding:\n{e}")
-
+        except Exception as ex:
+            pass
     def start_leading(self):
+        logger.info(f"I am a leader. Term: {self.current_term}")
         self.state = "leader"
         timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeat)
         timer.start()
@@ -126,13 +125,12 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             try:
                 result = client_stub.AppendEntries(
                     pb.AppendRequest(leaderTerm=self.current_term, leaderId=self.server_id))
-                logger.info(f"The server: {server_address} append response is: {result.term}, {result.success}")
                 if not result.success:
                     self.current_term = result.term
                     self.state = "follower"
                     return
-            except Exception as e:
-                logger.info(f"The server: {server_address} is not responding:\n{e}")
+            except Exception as ex:
+                pass
 
     def RequestVote(self, request, context):
         # logger.info(f"({self.current_term}) RequestVote from: {request.candidateId}")
@@ -183,9 +181,9 @@ def start_server():
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     server.add_insecure_port(needed_server_address)
+    logger.info(f"The server starts at {needed_server_address}")
     pb_grpc.add_RaftElectionServiceServicer_to_server(
         RaftElectionService(needed_server_id, needed_server_address, servers), server)
-    logger.info(f"Starts at {needed_server_address}")
     server.start()
     server.wait_for_termination()
 
