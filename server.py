@@ -1,7 +1,7 @@
+import logging
 import multiprocessing
 import random
 import sys
-import logging
 import threading
 from concurrent import futures
 
@@ -102,12 +102,14 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def request_election_vote(self, address: str, queue) -> None:
         channel = grpc.insecure_channel(address)
         client_stub = pb_grpc.RaftElectionServiceStub(channel)
+        # noinspection PyBroadException
         try:
             result = client_stub.RequestVote(
                 pb.VoteRequest(candidateTerm=self.current_term, candidateId=self.server_id))
             queue.put(result)
-        except Exception as ex:
+        except Exception:
             pass
+
     def start_leading(self):
         logger.info(f"I am a leader. Term: {self.current_term}")
         self.state = "leader"
@@ -122,6 +124,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         for _, server_address in self.servers.items():
             channel = grpc.insecure_channel(server_address)
             client_stub = pb_grpc.RaftElectionServiceStub(channel)
+            # noinspection PyBroadException
             try:
                 result = client_stub.AppendEntries(
                     pb.AppendRequest(leaderTerm=self.current_term, leaderId=self.server_id))
@@ -129,11 +132,10 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                     self.current_term = result.term
                     self.state = "follower"
                     return
-            except Exception as ex:
+            except Exception:
                 pass
 
     def RequestVote(self, request, context):
-        # logger.info(f"({self.current_term}) RequestVote from: {request.candidateId}")
         if request.candidateTerm > self.current_term or \
                 (request.candidateTerm == self.current_term and
                  (self.current_vote is None or self.current_vote == request.candidateId)):
@@ -194,4 +196,4 @@ if __name__ == "__main__":
         start_server()
     except KeyboardInterrupt:
         logger.info("Shutting down")
-        exit()
+        sys.exit(0)
