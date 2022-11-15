@@ -50,6 +50,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.start_following()
         self.leader_id = None
         self.leader_address = None
+        self.leader_timer = None
         super().__init__()
 
     def start_election_timer(self) -> threading.Timer:
@@ -122,16 +123,17 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def start_leading(self):
         logger.info(f"I am a leader. Term: {self.current_term}")
+        self.election_timer.cancel()
         self.state = "leader"
         self.leader_id = self.server_id
         self.leader_address = self.server_address
 
-        timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeats)
-        timer.start()
+        self.leader_timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeats)
+        self.leader_timer.start()
         while self.state == "leader":
             pass
         logger.info(f"I am a follower. Term: {self.current_term}")
-        timer.cancel()
+        self.leader_timer.cancel()
 
     def send_heartbeats(self):
         threads = []
@@ -225,19 +227,21 @@ class SuspendableRaftElectionService(RaftElectionService):
 
     # noinspection PyUnusedLocal
     def __suspend(self, request, context):
+        was_follower = self.state == "follower"
+        logger.info(f"({self.current_term}) Suspend")
         period = request.period
         logger.info(f"Command from client: suspend {request.period}")
 
         self.suspended = True
         self.state = "follower"
         self.election_timer.cancel()
-
-        logger.info(f"Sleeping for {period} seconds")
+        if self.leader_timer is not None:
+            self.leader_timer.cancel()
         time.sleep(period)
-
+        if was_follower:
+            logger.info(f"I am a follower. Term: {self.current_term}")
+        self.election_timer = self.start_election_timer()
         self.suspended = False
-        self.start_following()
-
         return pb.Void()
 
     def __wrap_with_suspend(self, func: Callable, request, context):
