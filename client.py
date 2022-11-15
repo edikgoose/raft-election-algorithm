@@ -28,9 +28,9 @@ class UserService:
         self.address: Optional[str] = None
         self.service: Optional[RaftElectionService] = None
 
-    def connect(self, address: str) -> None:
-        self.address = address
-        channel = grpc.insecure_channel(address)
+    def connect(self, ipaddr: str, port: int) -> None:
+        self.address = f"{ipaddr}:{port}"
+        channel = grpc.insecure_channel(self.address)
         self.service = RaftElectionService(channel)
 
     def get_leader(self) -> (int, str):
@@ -70,7 +70,7 @@ def main() -> None:
             command, *args = line.split(maxsplit=1)
 
             if command == "connect":
-                service.connect(args[0])
+                service.connect(*args[0].split(maxsplit=1))
             elif command == "getleader":
                 response = service.get_leader()
                 print(*response)
