@@ -224,8 +224,12 @@ class SuspendableRaftElectionService(RaftElectionService):
         logger.info(f"({self.current_term}) Suspend")
         period = request.period
         self.suspended = True
+        self.state = "follower"
+        self.election_timer.cancel()
         time.sleep(period)
         self.suspended = False
+        self.start_following()
+        return pb.Void()
 
     def __wrap_with_suspend(self, func: Callable, request, context):
         if self.suspended:
