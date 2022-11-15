@@ -27,6 +27,11 @@ def generate_random_timeout() -> int:
     return random.randint(ELECTION_INTERVAL[0], ELECTION_INTERVAL[1])
 
 
+def start_after_time(period_sec: float, func: Callable, *args, **kwargs) -> None:
+    timer = threading.Timer(period_sec, func, args, kwargs)
+    timer.start()
+
+
 # noinspection PyUnresolvedReferences
 class RepeatTimer(threading.Timer):
     """ Taken from https://stackoverflow.com/a/48741004/11825114 """
@@ -233,21 +238,32 @@ class SuspendableRaftElectionService(RaftElectionService):
 
     # noinspection PyUnusedLocal
     def __suspend(self, request, context):
-        was_follower = self.state == "follower"
         period = request.period
         logger.info(f"Command from client: suspend {request.period}")
+
+        was_follower = self.state == "follower"
 
         self.suspended = True
         self.state = "follower"
         self.election_timer.cancel()
         if self.leader_timer is not None:
             self.leader_timer.cancel()
+
+        # actual suspend only after function return
+        start_after_time(period_sec=0.025, func=self.__make_suspend, period=period, was_follower=was_follower)
+
+        return pb.Void()
+
+    def __make_suspend(self, period: int, was_follower: bool):
+        logger.info(f"Sleeping for {period} seconds")
         time.sleep(period)
+
+        # after wake up
         if was_follower:
             logger.info(f"I am a follower. Term: {self.current_term}")
         self.election_timer = self.start_election_timer()
+
         self.suspended = False
-        return pb.Void()
 
     def __wrap_with_suspend(self, func: Callable, request, context):
         if self.suspended:
@@ -293,4 +309,3 @@ def start_server():
 if __name__ == "__main__":
     logging.basicConfig()
     start_server()
-
