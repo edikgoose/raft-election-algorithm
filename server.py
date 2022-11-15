@@ -27,15 +27,6 @@ def generate_random_timeout() -> int:
     return random.randint(ELECTION_INTERVAL[0], ELECTION_INTERVAL[1])
 
 
-def handle_rpc_error(func):
-    def wrapper(*args, **kwargs):
-        try:
-            func(*args, **kwargs)
-        except grpc.RpcError as e:
-            logger.error(e)
-    return wrapper
-
-
 # noinspection PyUnresolvedReferences
 class RepeatTimer(threading.Timer):
     """ Taken from https://stackoverflow.com/a/48741004/11825114 """
@@ -169,7 +160,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         except Exception:
             pass
 
-    @handle_rpc_error
     def RequestVote(self, request, context):
         if request.candidateTerm > self.current_term or \
                 (request.candidateTerm == self.current_term and
@@ -182,7 +172,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         else:
             return pb.VoteResponse(term=self.current_term, result=False)
 
-    @handle_rpc_error
     def AppendEntries(self, request: pb.AppendRequest, context):
         try:
             if self.state == "follower":
@@ -200,7 +189,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         except grpc.RpcError as e:
             logging.error(e)
 
-    @handle_rpc_error
     def GetLeader(self, request, context):
         if self.state == "candidate":
             if self.current_vote is None:
@@ -232,7 +220,6 @@ class SuspendableRaftElectionService(RaftElectionService):
         return self.__wrap_with_suspend(self.__suspend, request, context)
 
     # noinspection PyUnusedLocal
-    @handle_rpc_error
     def __suspend(self, request, context):
         logger.info(f"({self.current_term}) Suspend")
         period = request.period
