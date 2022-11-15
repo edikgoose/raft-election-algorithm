@@ -1,4 +1,3 @@
-import logging
 import multiprocessing
 import random
 import sys
@@ -10,9 +9,6 @@ from typing import Callable
 import grpc
 import raft_pb2 as pb
 import raft_pb2_grpc as pb_grpc
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 HEARTBEAT_INTERVAL = 50         # ms
 ELECTION_INTERVAL = 300, 600    # ms
@@ -255,7 +251,7 @@ class SuspendableRaftElectionService(RaftElectionService):
         return pb.Void()
 
     def __make_suspend(self, period: int, was_follower: bool):
-        logger.info(f"Sleeping for {period} seconds")
+        print(f"Sleeping for {period} seconds")
         time.sleep(period)
 
         # after wake up
@@ -311,5 +307,4 @@ def start_server():
 
 
 if __name__ == "__main__":
-    logging.basicConfig()
     start_server()
