@@ -51,6 +51,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_id = None
         self.leader_address = None
         self.leader_timer = None
+        self.should_interrupt = False
         super().__init__()
 
     def start_election_timer(self) -> threading.Timer:
@@ -131,6 +132,9 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.leader_timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeats)
         self.leader_timer.start()
         while self.state == "leader":
+            if self.should_interrupt:
+                self.leader_timer.cancel()
+                return
             pass
         logger.info(f"I am a follower. Term: {self.current_term}")
         self.leader_timer.cancel()
@@ -145,6 +149,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             thread.start()
 
         for thread in threads:
+            if self.should_interrupt:
+                return
             thread.join()
 
     def send_heartbeat(self, server_address):
@@ -228,7 +234,6 @@ class SuspendableRaftElectionService(RaftElectionService):
     # noinspection PyUnusedLocal
     def __suspend(self, request, context):
         was_follower = self.state == "follower"
-        logger.info(f"({self.current_term}) Suspend")
         period = request.period
         logger.info(f"Command from client: suspend {request.period}")
 
@@ -270,18 +275,22 @@ def start_server():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     server.add_insecure_port(needed_server_address)
     logger.info(f"The server starts at {needed_server_address}")
+    service = SuspendableRaftElectionService(needed_server_id, needed_server_address, servers)
     pb_grpc.add_RaftElectionServiceServicer_to_server(
-        SuspendableRaftElectionService(needed_server_id, needed_server_address, servers),
+        service,
         server
     )
-    server.start()
-    server.wait_for_termination()
+    try:
+        server.start()
+        server.wait_for_termination()
+    except KeyboardInterrupt:
+        service.should_interrupt = True
+        server.stop(grace=None)
+        logger.info("Shutting down")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
-    try:
-        logging.basicConfig()
-        start_server()
-    except KeyboardInterrupt:
-        logger.info("Shutting down")
-        sys.exit(0)
+    logging.basicConfig()
+    start_server()
+
