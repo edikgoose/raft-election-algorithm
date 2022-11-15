@@ -51,7 +51,7 @@ class UserService:
 
     @staticmethod
     def __validate_period(period: int):
-        if period is not int or (0 < period > 3600):
+        if period is not int or (0 > period < 3600):
             raise ValueError("Period must an integer that belongs to range [0, 3600]")
 
 
