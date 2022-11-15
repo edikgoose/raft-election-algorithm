@@ -67,19 +67,19 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def start_following(self):
         self.state = "follower"
-        logger.info(f"I am a follower. Term: {self.current_term}")
+        print(f"I am a follower. Term: {self.current_term}")
         self.election_timer = self.start_election_timer()
 
     def start_election(self):
-        logger.info("The leader is dead")
-        logger.info(f"I am a candidate. Term: {self.current_term}")
+        print("The leader is dead")
+        print(f"I am a candidate. Term: {self.current_term}")
         if self.state != "follower":
             return
 
         self.state = "candidate"
         self.current_term += 1
         self.current_vote = self.server_id
-        logger.info(f"Voted for node {self.server_id}")
+        print(f"Voted for node {self.server_id}")
         number_of_voted = 1  # because server initially votes for itself
 
         queue = multiprocessing.Queue()
@@ -96,7 +96,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         for thread in threads:
             thread.join()
 
-        logger.info(f"Votes received")
+        print(f"Votes received")
         while not queue.empty():
             vote_result = queue.get()
             if vote_result is None:  # if server is not responding
@@ -128,7 +128,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             pass
 
     def start_leading(self):
-        logger.info(f"I am a leader. Term: {self.current_term}")
+        print(f"I am a leader. Term: {self.current_term}")
         self.election_timer.cancel()
         self.state = "leader"
         self.leader_id = self.server_id
@@ -141,7 +141,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 self.leader_timer.cancel()
                 return
             pass
-        logger.info(f"I am a follower. Term: {self.current_term}")
+        print(f"I am a follower. Term: {self.current_term}")
         self.leader_timer.cancel()
 
     def send_heartbeats(self):
@@ -199,10 +199,10 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             else:
                 return pb.AppendResponse(term=self.current_term, success=False)
         except grpc.RpcError as e:
-            logger.error(e)
+            print(str(e))
 
     def GetLeader(self, request, context):
-        logger.info("Command from client: getleader")
+        print("Command from client: getleader")
         node_id, node_address = None, None
 
         if self.state == "candidate":
@@ -211,7 +211,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         else:
             node_id, node_address = self.leader_id, self.leader_address
 
-        logger.info(f"{node_id} {node_address}")
+        print(f"{node_id} {node_address}")
         return pb.GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
 
     def Suspend(self, request, context):
@@ -239,7 +239,7 @@ class SuspendableRaftElectionService(RaftElectionService):
     # noinspection PyUnusedLocal
     def __suspend(self, request, context):
         period = request.period
-        logger.info(f"Command from client: suspend {request.period}")
+        print(f"Command from client: suspend {request.period}")
 
         was_follower = self.state == "follower"
 
@@ -260,7 +260,7 @@ class SuspendableRaftElectionService(RaftElectionService):
 
         # after wake up
         if was_follower:
-            logger.info(f"I am a follower. Term: {self.current_term}")
+            print(f"I am a follower. Term: {self.current_term}")
         self.election_timer = self.start_election_timer()
 
         self.suspended = False
@@ -288,9 +288,13 @@ def start_server():
         servers[server_id] = address
     config_file.close()
 
+    if needed_server_address is None:
+        print("No such available server id")
+        sys.exit()
+
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     server.add_insecure_port(needed_server_address)
-    logger.info(f"The server starts at {needed_server_address}")
+    print(f"The server starts at {needed_server_address}")
     service = SuspendableRaftElectionService(needed_server_id, needed_server_address, servers)
     pb_grpc.add_RaftElectionServiceServicer_to_server(
         service,
@@ -302,7 +306,7 @@ def start_server():
     except KeyboardInterrupt:
         service.should_interrupt = True
         server.stop(grace=None)
-        logger.info("Shutting down")
+        print("Shutting down")
         sys.exit(0)
 
 
