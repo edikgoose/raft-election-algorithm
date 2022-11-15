@@ -80,7 +80,8 @@ def main() -> None:
                 raise KeyboardInterrupt
             else:
                 raise CommandNotExistError("Command does not exist")
-
+        except grpc.RpcError:
+            print("The server is unavailable")
         except KeyboardInterrupt:
             print("The client ends")
             sys.exit(0)

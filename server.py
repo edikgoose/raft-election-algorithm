@@ -72,7 +72,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         self.state = "candidate"
         self.current_term += 1
         self.current_vote = self.server_id
-        logger.info(f"Voted for node: {self.server_id}")
+        logger.info(f"Voted for node {self.server_id}")
         number_of_voted = 1  # because server initially votes for itself
 
         queue = multiprocessing.Queue()
@@ -186,15 +186,20 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             else:
                 return pb.AppendResponse(term=self.current_term, success=False)
         except grpc.RpcError as e:
-            logging.error(e)
+            logger.error(e)
 
     def GetLeader(self, request, context):
+        logger.info("Command from client: getleader")
+        node_id, node_address = None, None
+
         if self.state == "candidate":
-            if self.current_vote is None:
-                return pb.GetLeaderResponse(nodeId=None, nodeAdress=None)
-            else:
-                return pb.GetLeaderResponse(nodeId=self.current_vote, nodeAddress=self.servers[self.current_vote])
-        return pb.GetLeaderResponse(nodeId=self.leader_id, nodeAddress=self.leader_address)
+            if not self.current_vote:
+                node_id, node_address = self.current_vote, self.servers[self.current_vote]
+        else:
+            node_id, node_address = self.leader_id, self.leader_address
+
+        logger.info(f"{node_id} {node_address}")
+        return pb.GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
 
     def Suspend(self, request, context):
         pass
@@ -220,14 +225,19 @@ class SuspendableRaftElectionService(RaftElectionService):
 
     # noinspection PyUnusedLocal
     def __suspend(self, request, context):
-        logger.info(f"({self.current_term}) Suspend")
         period = request.period
+        logger.info(f"Command from client: suspend {request.period}")
+
         self.suspended = True
         self.state = "follower"
         self.election_timer.cancel()
+
+        logger.info(f"Sleeping for {period} seconds")
         time.sleep(period)
+
         self.suspended = False
         self.start_following()
+
         return pb.Void()
 
     def __wrap_with_suspend(self, func: Callable, request, context):
