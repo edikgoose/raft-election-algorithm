@@ -50,8 +50,9 @@ class UserService:
             raise NoServerProvidedError("No server address provided")
 
     @staticmethod
-    def __validate_period(period: int):
-        if period is not int or (0 > period < 3600):
+    def __validate_period(period: str):
+        period = int(period)
+        if type(period) is not int or 0 < period > 3600:
             raise ValueError("Period must an integer that belongs to range [0, 3600]")
 
 
@@ -73,7 +74,7 @@ def main() -> None:
                 response = service.get_leader()
                 print(*response)
             elif command == "suspend":
-                service.suspend(int(args[0]))
+                service.suspend(args[0])
             elif command == "quit":
                 raise KeyboardInterrupt
             else:
