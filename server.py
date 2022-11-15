@@ -134,7 +134,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         timer.cancel()
 
     def send_heartbeats(self):
-        logger.info("Sending heartbeats")
         threads = []
 
         for _, server_address in self.servers.items():
