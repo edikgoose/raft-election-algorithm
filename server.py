@@ -10,8 +10,8 @@ import grpc
 import raft_pb2 as pb
 import raft_pb2_grpc as pb_grpc
 
-HEARTBEAT_INTERVAL = 50         # ms
-ELECTION_INTERVAL = 300, 600    # ms
+HEARTBEAT_INTERVAL = 50  # ms
+ELECTION_INTERVAL = 300, 600  # ms
 
 
 def parse_server_config(config: str) -> (int, str):
@@ -136,7 +136,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             if self.should_interrupt:
                 self.leader_timer.cancel()
                 return
-            pass
         print(f"I am a follower. Term: {self.current_term}")
         self.leader_timer.cancel()
 
@@ -240,10 +239,6 @@ class SuspendableRaftElectionService(RaftElectionService):
         was_follower = self.state == "follower"
 
         self.suspended = True
-        self.state = "follower"
-        self.election_timer.cancel()
-        if self.leader_timer is not None:
-            self.leader_timer.cancel()
 
         # actual suspend only after function return
         start_after_time(period_sec=0.025, func=self.__make_suspend, period=period, was_follower=was_follower)
@@ -251,6 +246,10 @@ class SuspendableRaftElectionService(RaftElectionService):
         return pb.Void()
 
     def __make_suspend(self, period: int, was_follower: bool):
+        self.state = "follower"
+        self.election_timer.cancel()
+        if self.leader_timer is not None:
+            self.leader_timer.cancel()
         print(f"Sleeping for {period} seconds")
         time.sleep(period)
 
