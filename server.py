@@ -139,9 +139,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         timer.start()
         while self.state == "leader":
             pass
+        logger.info(f"I am a follower. Term: {self.current_term}")
         timer.cancel()
 
     def send_heartbeats(self):
+        logger.info("Sending heartbeats")
         threads = []
 
         for _, server_address in self.servers.items():
@@ -236,6 +238,7 @@ class SuspendableRaftElectionService(RaftElectionService):
         period = request.period
         self.suspended = True
         time.sleep(period)
+        self.suspended = False
 
     def __wrap_with_suspend(self, func: Callable, request, context):
         if self.suspended:
