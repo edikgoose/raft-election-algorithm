@@ -39,10 +39,10 @@ class UserService:
         response: GetLeaderResponse = self.service.GetLeader(request)
         return response.nodeId, response.nodeAddress
 
-    def suspend(self, period_sec: int) -> None:
-        self.__validate_period(period_sec)
+    def suspend(self, period_sec: str) -> None:
+        period = self.__validate_period(period_sec)
         self.__validate_server()
-        request = SuspendRequest(period_sec)
+        request = SuspendRequest(period=period)
         self.service.Suspend(request)
 
     def __validate_server(self):
@@ -50,10 +50,11 @@ class UserService:
             raise NoServerProvidedError("No server address provided")
 
     @staticmethod
-    def __validate_period(period: str):
+    def __validate_period(period: str) -> int:
         period = int(period)
         if type(period) is not int or 0 < period > 3600:
             raise ValueError("Period must an integer that belongs to range [0, 3600]")
+        return period
 
 
 def main() -> None:
