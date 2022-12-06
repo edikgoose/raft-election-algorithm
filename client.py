@@ -12,6 +12,10 @@ SuspendRequest = raft_pb2.SuspendRequest
 Void = raft_pb2.Void
 VoteRequest = raft_pb2.VoteRequest
 VoteResponse = raft_pb2.VoteResponse
+Key = raft_pb2.Key
+KeyValue = raft_pb2.KeyValue
+SetValResponse = raft_pb2.SetValResponse
+GetValResponse = raft_pb2.GetValResponse
 
 
 class CommandNotExistError(Exception):
@@ -19,6 +23,10 @@ class CommandNotExistError(Exception):
 
 
 class NoServerProvidedError(Exception):
+    pass
+
+
+class InternalSerivceError(Exception):
     pass
 
 
@@ -44,6 +52,19 @@ class UserService:
         self.__validate_server()
         request = SuspendRequest(period=period)
         self.service.Suspend(request)
+
+    def set_val(self, key: str, value: str) -> None:
+        self.__validate_server()
+        request = KeyValue(key=key, value=value)
+        response: SetValResponse = self.service.SetVal(request)
+        if not response.success:
+            raise InternalSerivceError("Procedure call is failed")
+
+    def get_val(self, key: str) -> Optional[str]:
+        self.__validate_server()
+        request = Key(key=key)
+        response: GetValResponse = self.service.GetVal(request)
+        return response.value if response.success else None
 
     def __validate_server(self):
         if not self.service:
@@ -75,7 +96,13 @@ def main() -> None:
                 response = service.get_leader()
                 print(*response)
             elif command == "suspend":
-                service.suspend(args[0])
+                service.suspend(period_sec=args[0])
+            elif command == "setval":
+                key, value = args[0].split(maxsplit=1)
+                service.set_val(key=key, value=value)
+            elif command == "getval":
+                response = service.get_val(key=args[0])
+                print(response)
             elif command == "quit":
                 raise KeyboardInterrupt
             else:
@@ -85,6 +112,8 @@ def main() -> None:
         except KeyboardInterrupt:
             print("The client ends")
             sys.exit(0)
+        except InternalSerivceError:
+            pass
         except Exception as e:
             print(e)
             print("Try again!")

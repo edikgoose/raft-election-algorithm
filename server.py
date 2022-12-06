@@ -4,11 +4,25 @@ import sys
 import threading
 import time
 from concurrent import futures
-from typing import Callable
+from typing import Callable, Any
 
 import grpc
-import raft_pb2 as pb
+import raft_pb2
 import raft_pb2_grpc as pb_grpc
+
+# noinspection DuplicatedCode
+AppendRequest = raft_pb2.AppendRequest
+AppendResponse = raft_pb2.AppendResponse
+GetLeaderResponse = raft_pb2.GetLeaderResponse
+SuspendRequest = raft_pb2.SuspendRequest
+Void = raft_pb2.Void
+VoteRequest = raft_pb2.VoteRequest
+VoteResponse = raft_pb2.VoteResponse
+Key = raft_pb2.Key
+KeyValue = raft_pb2.KeyValue
+SetValResponse = raft_pb2.SetValResponse
+GetValResponse = raft_pb2.GetValResponse
+
 
 HEARTBEAT_INTERVAL = 50  # ms
 ELECTION_INTERVAL = 300, 600  # ms
@@ -118,7 +132,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         # noinspection PyBroadException
         try:
             result = client_stub.RequestVote(
-                pb.VoteRequest(candidateTerm=self.current_term, candidateId=self.server_id))
+                VoteRequest(candidateTerm=self.current_term, candidateId=self.server_id))
             queue.put(result)
         except Exception:
             pass
@@ -159,7 +173,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         # noinspection PyBroadException
         try:
             result = client_stub.AppendEntries(
-                pb.AppendRequest(leaderTerm=self.current_term, leaderId=self.server_id))
+                AppendRequest(leaderTerm=self.current_term, leaderId=self.server_id))
             if not result.success:
                 self.current_term = result.term
                 self.state = "follower"
@@ -175,11 +189,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             self.current_vote = request.candidateId
             if self.state != "follower":
                 self.start_following()
-            return pb.VoteResponse(term=self.current_term, result=True)
+            return VoteResponse(term=self.current_term, result=True)
         else:
-            return pb.VoteResponse(term=self.current_term, result=False)
+            return VoteResponse(term=self.current_term, result=False)
 
-    def AppendEntries(self, request: pb.AppendRequest, context):
+    def AppendEntries(self, request: AppendRequest, context):
         try:
             if self.state == "follower":
                 self.election_timer.cancel()
@@ -190,9 +204,9 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
             if request.leaderTerm >= self.current_term:
                 self.current_term = request.leaderTerm
-                return pb.AppendResponse(term=self.current_term, success=True)
+                return AppendResponse(term=self.current_term, success=True)
             else:
-                return pb.AppendResponse(term=self.current_term, success=False)
+                return AppendResponse(term=self.current_term, success=False)
         except grpc.RpcError as e:
             print(str(e))
 
@@ -207,7 +221,17 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             node_id, node_address = self.leader_id, self.leader_address
 
         print(f"{node_id} {node_address}")
-        return pb.GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
+        return GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
+
+    def SetVal(self, request, context):
+        # maybe log
+        key, value = request.key, request.value
+        return SetValResponse(success=None)
+
+    def GetVal(self, request, context):
+        key = request.key
+        # maybe log
+        return GetValResponse(success=None, value=None)
 
     def Suspend(self, request, context):
         pass
@@ -222,17 +246,23 @@ class SuspendableRaftElectionService(RaftElectionService):
     def RequestVote(self, request, context):
         return self.__wrap_with_suspend(super().RequestVote, request, context)
 
-    def AppendEntries(self, request: pb.AppendRequest, context):
+    def AppendEntries(self, request: AppendRequest, context):
         return self.__wrap_with_suspend(super().AppendEntries, request, context)
 
     def GetLeader(self, request, context):
         return self.__wrap_with_suspend(super().GetLeader, request, context)
 
+    def SetVal(self, request, context):
+        return self.__wrap_with_suspend(super().SetVal, request, context)
+
+    def GetVal(self, request, context):
+        return self.__wrap_with_suspend(super().GetVal, request, context)
+
     def Suspend(self, request, context):
         return self.__wrap_with_suspend(self.__suspend, request, context)
 
     # noinspection PyUnusedLocal
-    def __suspend(self, request, context):
+    def __suspend(self, request, context) -> Void:
         period = request.period
         print(f"Command from client: suspend {request.period}")
 
@@ -243,9 +273,9 @@ class SuspendableRaftElectionService(RaftElectionService):
         # actual suspend only after function return
         start_after_time(period_sec=0.025, func=self.__make_suspend, period=period, was_follower=was_follower)
 
-        return pb.Void()
+        return Void()
 
-    def __make_suspend(self, period: int, was_follower: bool):
+    def __make_suspend(self, period: int, was_follower: bool) -> None:
         self.state = "follower"
         self.election_timer.cancel()
         if self.leader_timer is not None:
@@ -260,17 +290,29 @@ class SuspendableRaftElectionService(RaftElectionService):
 
         self.suspended = False
 
-    def __wrap_with_suspend(self, func: Callable, request, context):
+    def __wrap_with_suspend(self, func: Callable, request, context) -> Void | Any:
         if self.suspended:
             msg = "Server is suspended"
             context.set_details(msg)
             context.set_code(grpc.StatusCode.UNAVAILABLE)
-            return pb.Void()
+            return Void()
         else:
             return func(request, context)
 
 
-def start_server():
+def configure_server(server_addr: str, server_id: int, other_servers_addrs: [str]):
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server.add_insecure_port(server_addr)
+    print(f"The server starts at {server_addr}")
+    service = SuspendableRaftElectionService(server_id, server_addr, other_servers_addrs)
+    pb_grpc.add_RaftElectionServiceServicer_to_server(
+        service,
+        server
+    )
+    return service, server
+
+
+def start_server() -> None:
     needed_server_id = int(sys.argv[1])
     config_file = open("config.conf", "r")
     servers = {}
@@ -287,14 +329,10 @@ def start_server():
         print("No such available server id")
         sys.exit()
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    server.add_insecure_port(needed_server_address)
-    print(f"The server starts at {needed_server_address}")
-    service = SuspendableRaftElectionService(needed_server_id, needed_server_address, servers)
-    pb_grpc.add_RaftElectionServiceServicer_to_server(
-        service,
-        server
-    )
+    service, server = configure_server(server_addr=needed_server_address,
+                                       server_id=needed_server_id,
+                                       other_servers_addrs=servers)
+
     try:
         server.start()
         server.wait_for_termination()

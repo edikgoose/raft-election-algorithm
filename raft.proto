@@ -62,5 +62,5 @@ message SetValResponse {
 
 message GetValResponse {
   bool success = 1;
-  bool value = 2;
+  string value = 2;
 }
