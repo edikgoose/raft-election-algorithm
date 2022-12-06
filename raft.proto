@@ -6,11 +6,15 @@ service RaftElectionService {
   rpc AppendEntries(AppendRequest) returns (AppendResponse);
   rpc GetLeader(Void) returns (GetLeaderResponse);
   rpc Suspend(SuspendRequest) returns (Void);
+  rpc SetVal(KeyValue) returns (SetValResponse);
+  rpc GetVal(Key) returns (GetValResponse);
 }
 
 message VoteRequest {
   uint64 candidateTerm = 1;
   uint64 candidateId = 2;
+  uint64 lastLogIndex = 3;
+  uint64 lastLogTerm = 4;
 }
 
 message VoteResponse {
@@ -21,6 +25,10 @@ message VoteResponse {
 message AppendRequest {
   uint64 leaderTerm = 1;
   uint64 leaderId = 2;
+  uint64 prevLogIndex = 3;
+  uint64 prevLogTerm = 4;
+  repeated KeyValue entries = 5;
+  uint64 leaderCommitIndex = 6;
 }
 
 message AppendResponse {
@@ -37,4 +45,22 @@ message GetLeaderResponse {
 
 message SuspendRequest {
   uint64 period = 1;
+}
+
+message Key {
+  string key = 1;
+}
+
+message KeyValue {
+  string key = 1;
+  string value = 2;
+}
+
+message SetValResponse {
+  bool success = 1;
+}
+
+message GetValResponse {
+  bool success = 1;
+  bool value = 2;
 }
