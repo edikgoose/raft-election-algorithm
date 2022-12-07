@@ -426,7 +426,7 @@ class SuspendableRaftElectionService(RaftElectionService):
 
         self.suspended = False
 
-    def __wrap_with_suspend(self, func: Callable, request, context) -> Void | Any:
+    def __wrap_with_suspend(self, func: Callable, request, context) -> Any:
         if self.suspended:
             msg = "Server is suspended"
             context.set_details(msg)
