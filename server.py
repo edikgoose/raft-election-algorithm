@@ -365,6 +365,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     # todo ready
     def SetVal(self, request: KeyValue, context):
+        print("Setval suka")
         if self.state == "leader":
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
