@@ -365,7 +365,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     # todo ready
     def SetVal(self, request: KeyValue, context):
-        print("Setval suka")
         if self.state == "leader":
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
@@ -376,9 +375,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             return client_stub.SetVal(request)
 
     def GetVal(self, request, context):
-        key = request.key
-
-        return GetValResponse(success=None, value=None)
+        if request.key in self.data:
+            value = self.data[request.key]
+            return GetValResponse(success=True, value=value)
+        else:
+            return GetValResponse(success=False)
 
     def Suspend(self, request, context):
         pass
