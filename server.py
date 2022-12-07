@@ -202,11 +202,16 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def send_heartbeat(self, server_address):
         client_stub = get_service_stub(server_address)
 
-        # if for current moment there are new logs => send them with heartbeat
-        i = self.sent_length[server_address]
-        entries: [LogEntry] = self.logs[i:]
-        prev_log_term: int = self.logs[i - 1].term if (i > 0) else 0
-        # end
+        if self.sent_length and self.logs:
+            # if for current moment there are new logs => send them with heartbeat
+            i = self.sent_length[server_address]
+            entries: [LogEntry] = self.logs[i:]
+            prev_log_term: int = self.logs[i - 1].term if (i > 0) else 0
+            # end
+        else:
+            i = 0
+            prev_log_term = 0
+            entries = []
 
         # noinspection PyBroadException
         try:
@@ -288,9 +293,12 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         last_log_index = request.lastLogIndex
         last_log_term = request.lastLogTerm
 
-        my_log_term = self.logs[-1].term
-        log_ok = (last_log_term > my_log_term) or \
-                 (last_log_term == my_log_term and last_log_index >= len(self.logs))
+        if not self.logs:
+            log_ok = True
+        else:
+            my_log_term = self.logs[-1].term
+            log_ok = (last_log_term > my_log_term) or \
+                     (last_log_term == my_log_term and last_log_index >= len(self.logs))
 
         voted_ok = self.current_vote is None or self.current_vote == candidate_id
         term_ok = candidate_term > self.current_term or (candidate_term == self.current_term and voted_ok)
@@ -322,11 +330,14 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 self.current_term = term
                 self.current_vote = None
 
-            log_ok = len(self.logs) >= log_length
-            if log_ok and log_length > 0:
-                log_ok = log_term == self.logs[-1].term
+            if not self.logs:
+                log_ok = True
+            else:
+                log_ok = len(self.logs) >= log_length
+                if log_ok and log_length > 0:
+                    log_ok = log_term == self.logs[-1].term
 
-            if request.leaderTerm == self.current_term and log_ok:
+            if term == self.current_term and log_ok:
                 self.leader_id = leader_id
                 self.leader_address = self.servers[leader_id]
                 # if self.state != "follower":
@@ -354,7 +365,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     # todo ready
     def SetVal(self, request: KeyValue, context):
-        key, value = request.key, request.value
         if self.state == "leader":
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
