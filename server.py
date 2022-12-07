@@ -22,6 +22,7 @@ Key = raft_pb2.Key
 KeyValue = raft_pb2.KeyValue
 SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
+LogEntry = raft_pb2.LogEntry
 
 
 HEARTBEAT_INTERVAL = 50  # ms
@@ -55,7 +56,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
         # log receiving
-        self.logs: [KeyValue] = []
+        self.logs: [LogEntry] = []
         self.commit_length: int = 0
         self.sent_length: int = 0
         self.acked_length: int = 0
