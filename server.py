@@ -1,3 +1,4 @@
+import math
 import multiprocessing
 import random
 import sys
@@ -23,7 +24,6 @@ KeyValue = raft_pb2.KeyValue
 SetValResponse = raft_pb2.SetValResponse
 GetValResponse = raft_pb2.GetValResponse
 LogEntry = raft_pb2.LogEntry
-
 
 HEARTBEAT_INTERVAL = 50  # ms
 ELECTION_INTERVAL = 300, 600  # ms
@@ -52,14 +52,21 @@ class RepeatTimer(threading.Timer):
             self.function(*self.args, **self.kwargs)
 
 
+def get_service_stub(node_address: str) -> pb_grpc.RaftElectionServiceStub:
+    channel = grpc.insecure_channel(node_address)
+    client_stub = pb_grpc.RaftElectionServiceStub(channel)
+    return client_stub
+
+
 class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
         # log receiving
         self.logs: [LogEntry] = []
         self.commit_length: int = 0
-        self.sent_length: int = 0
-        self.acked_length: int = 0
+        self.sent_length: dict[str, int] = {}
+        self.acked_length: dict[str, int] = {}
+        self.data: dict[str, str] = {}
 
         self.current_term = 0
         self.server_id = server_id
@@ -107,7 +114,10 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             last_term = self.logs[-1].term
 
         for _, server_address in self.servers.items():
-            thread = threading.Thread(target=self.request_election_vote, args=(server_address, queue))
+            thread = threading.Thread(target=self.request_election_vote, args=(server_address,
+                                                                               queue,
+                                                                               last_term,
+                                                                               len(self.logs)))
             thread.setDaemon(True)
             threads.append(thread)
             if self.state != "candidate":
@@ -137,23 +147,31 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             self.election_timeout = generate_random_timeout()
             self.start_following()
 
-    def request_election_vote(self, address: str, queue) -> None:
-        channel = grpc.insecure_channel(address)
-        client_stub = pb_grpc.RaftElectionServiceStub(channel)
+    def request_election_vote(self, address: str, queue, last_term: int, last_index: int) -> None:
+        client_stub = get_service_stub(node_address=address)
         # noinspection PyBroadException
         try:
-            result = client_stub.RequestVote(
-                VoteRequest(candidateTerm=self.current_term, candidateId=self.server_id))
+            result: VoteResponse = client_stub.RequestVote(
+                VoteRequest(candidateTerm=self.current_term,
+                            candidateId=self.server_id,
+                            lastLogTerm=last_term,
+                            lastLogIndex=last_index))
             queue.put(result)
         except Exception:
             pass
 
+    # todo ready
     def start_leading(self):
         print(f"I am a leader. Term: {self.current_term}")
         self.election_timer.cancel()
         self.state = "leader"
         self.leader_id = self.server_id
         self.leader_address = self.server_address
+
+        for _, server_address in self.servers.items():
+            self.sent_length[server_address] = len(self.logs)
+            # todo todo todo
+            self.acked_length[server_address] = 0
 
         self.leader_timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeats)
         self.leader_timer.start()
@@ -168,56 +186,156 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         threads = []
 
         for _, server_address in self.servers.items():
+            # replicate log
             thread = threading.Thread(target=self.send_heartbeat, args=(server_address,))
             thread.setDaemon(True)
             threads.append(thread)
             thread.start()
+            # replicate log end
 
         for thread in threads:
             if self.should_interrupt:
                 return
             thread.join()
 
+    # todo ready
     def send_heartbeat(self, server_address):
-        channel = grpc.insecure_channel(server_address)
-        client_stub = pb_grpc.RaftElectionServiceStub(channel)
+        client_stub = get_service_stub(server_address)
+
+        # if for current moment there are new logs => send them with heartbeat
+        i = self.sent_length[server_address]
+        entries: [LogEntry] = self.logs[i:]
+        prev_log_term: int = self.logs[i - 1].term if (i > 0) else 0
+        # end
+
         # noinspection PyBroadException
         try:
             result = client_stub.AppendEntries(
-                AppendRequest(leaderTerm=self.current_term, leaderId=self.server_id))
+                AppendRequest(leaderTerm=self.current_term,
+                              leaderId=self.server_id,
+                              prevLogIndex=i,
+                              prevLogTerm=prev_log_term,
+                              entries=entries,
+                              leaderCommitIndex=self.commit_length))
             if not result.success:
                 self.current_term = result.term
                 self.state = "follower"
                 return
+
+            self.on_append_response(follower_address=server_address,
+                                    term=result.term,
+                                    ack=result.ack,
+                                    success=result.success)
+
         except Exception:
             pass
 
+    def __acks(self, length: int):
+        acks = 0
+        for _, address in self.servers:
+            if self.acked_length[address] >= length:
+                acks += 1
+        return acks
+
+    # todo ready
+    def commit_log_entries(self):
+        min_acks = int(math.ceil((len(self.servers) + 1) / 2))
+        ready = []
+        for length in range(1, len(self.logs)):
+            if self.__acks(length):
+                ready.append(length)
+        if len(ready) > 0 and max(ready) > self.commit_length and self.logs[max(ready) - 1].term == self.current_term:
+            for i in range(self.commit_length, max(ready) - 1):
+                key_value = self.logs[i].keyValue
+                self.data[key_value.key] = key_value.value
+            self.commit_length = max(ready)
+
+    # todo ready
+    def on_append_response(self, follower_address: str, term: int, ack: int, success: bool):
+        if term == self.current_term and self.state == "leader":
+            if success:
+                self.sent_length[follower_address] = ack
+                self.acked_length[follower_address] = ack
+                self.commit_log_entries()
+            elif self.sent_length[follower_address] > 0:
+                self.sent_length[follower_address] = self.sent_length[follower_address] - 1
+                self.send_heartbeat(follower_address)
+        elif term > self.current_term:
+            self.current_term = term
+            if self.state != "follower":
+                self.start_following()
+            self.current_vote = None
+
+    def append_logs(self, log_length: int, leader_commit: int, entries: [LogEntry]) -> None:
+        if len(entries) > 0 and len(self.logs) > log_length:
+            if self.logs[log_length].term != entries[0].term:
+                self.logs = self.logs[:log_length-1]
+
+        if log_length + len(entries) > len(self.logs):
+            for i in range(len(self.logs) - log_length, len(entries) - 1):
+                self.logs.append(entries[i])
+
+        if leader_commit > self.commit_length:
+            for i in range(self.commit_length, leader_commit - 1):
+                key_value: KeyValue = self.logs[i].keyValue
+                self.data[key_value.key] = key_value.value  # deliver
+            self.commit_length = leader_commit
+
+    # todo ready
     def RequestVote(self, request, context):
-        if request.candidateTerm > self.current_term or \
-                (request.candidateTerm == self.current_term and
-                 (self.current_vote is None or self.current_vote == request.candidateId)):
-            self.current_term = request.candidateTerm
-            self.current_vote = request.candidateId
+        candidate_term = request.candidateTerm
+        candidate_id = request.candidateId
+        last_log_index = request.lastLogIndex
+        last_log_term = request.lastLogTerm
+
+        my_log_term = self.logs[-1].term
+        log_ok = (last_log_term > my_log_term) or \
+                 (last_log_term == my_log_term and last_log_index >= len(self.logs))
+
+        voted_ok = self.current_vote is None or self.current_vote == candidate_id
+        term_ok = candidate_term > self.current_term or (candidate_term == self.current_term and voted_ok)
+
+        if log_ok and term_ok:
+            self.current_term = candidate_term
+            self.current_vote = candidate_id
             if self.state != "follower":
                 self.start_following()
             return VoteResponse(term=self.current_term, result=True)
         else:
             return VoteResponse(term=self.current_term, result=False)
 
+    # todo ready
     def AppendEntries(self, request: AppendRequest, context):
+        leader_id = request.leaderId
+        term = request.leaderTerm
+        log_length = request.prevLogIndex
+        log_term = request.prevLogTerm
+        leader_commit = request.leaderCommitIndex
+        entries: [LogEntry] = request.entries
+
         try:
             if self.state == "follower":
                 self.election_timer.cancel()
                 self.election_timer = self.start_election_timer()
 
-            self.leader_id = request.leaderId
-            self.leader_address = self.servers[request.leaderId]
+            if term > self.current_term:
+                self.current_term = term
+                self.current_vote = None
 
-            if request.leaderTerm >= self.current_term:
-                self.current_term = request.leaderTerm
-                return AppendResponse(term=self.current_term, success=True)
+            log_ok = len(self.logs) >= log_length
+            if log_ok and log_length > 0:
+                log_ok = log_term == self.logs[-1].term
+
+            if request.leaderTerm == self.current_term and log_ok:
+                self.leader_id = leader_id
+                self.leader_address = self.servers[leader_id]
+                # if self.state != "follower":
+                #     self.start_following()
+                self.append_logs(log_length, leader_commit, entries)
+                ack = log_length + len(entries)
+                return AppendResponse(term=self.current_term, success=True, ack=ack)
             else:
-                return AppendResponse(term=self.current_term, success=False)
+                return AppendResponse(term=self.current_term, success=False, ack=0)
         except grpc.RpcError as e:
             print(str(e))
 
@@ -234,14 +352,21 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         print(f"{node_id} {node_address}")
         return GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
 
-    def SetVal(self, request, context):
-        # maybe log
+    # todo ready
+    def SetVal(self, request: KeyValue, context):
         key, value = request.key, request.value
-        return SetValResponse(success=None)
+        if self.state == "leader":
+            log_entry = LogEntry(keyValue=request, term=self.current_term)
+            self.logs.append(log_entry)
+            self.acked_length[self.server_address] = len(self.logs)
+            return SetValResponse(success=True)
+        else:
+            client_stub = get_service_stub(self.leader_address)
+            return client_stub.SetVal(request)
 
     def GetVal(self, request, context):
         key = request.key
-        # maybe log
+
         return GetValResponse(success=None, value=None)
 
     def Suspend(self, request, context):
