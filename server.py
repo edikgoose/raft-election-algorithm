@@ -247,7 +247,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         min_acks = int(math.ceil((len(self.servers) + 1) / 2))
         ready = []
         for length in range(1, len(self.logs)):
-            if self.__acks(length):
+            if self.__acks(length) >= min_acks:
                 ready.append(length)
         if len(ready) > 0 and max(ready) > self.commit_length and self.logs[max(ready) - 1].term == self.current_term:
             for i in range(self.commit_length, max(ready) - 1):
