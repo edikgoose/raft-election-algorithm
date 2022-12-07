@@ -27,7 +27,7 @@ message AppendRequest {
   uint64 leaderId = 2;
   uint64 prevLogIndex = 3;
   uint64 prevLogTerm = 4;
-  repeated KeyValue entries = 5;
+  repeated LogEntry entries = 5;
   uint64 leaderCommitIndex = 6;
 }
 
@@ -54,6 +54,11 @@ message Key {
 message KeyValue {
   string key = 1;
   string value = 2;
+}
+
+message LogEntry {
+  KeyValue keyValue = 1;
+  uint64 lastTerm = 2;
 }
 
 message SetValResponse {

@@ -54,6 +54,12 @@ class RepeatTimer(threading.Timer):
 class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     def __init__(self, server_id: int, server_address: str, servers: dict[int, str]) -> None:
+        # log receiving
+        self.logs: [KeyValue] = []
+        self.commit_length: int = 0
+        self.sent_length: int = 0
+        self.acked_length: int = 0
+
         self.current_term = 0
         self.server_id = server_id
         self.server_address = server_address
@@ -94,6 +100,10 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
         queue = multiprocessing.Queue()
         threads = []
+
+        last_term = 0
+        if len(self.logs) > 0:
+            last_term = self.logs[-1].term
 
         for _, server_address in self.servers.items():
             thread = threading.Thread(target=self.request_election_vote, args=(server_address, queue))
