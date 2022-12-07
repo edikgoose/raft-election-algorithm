@@ -34,6 +34,7 @@ message AppendRequest {
 message AppendResponse {
   uint64 term = 1;
   bool success = 2;
+  uint64 ack = 3;
 }
 
 message Void {}
