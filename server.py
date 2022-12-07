@@ -227,6 +227,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 self.state = "follower"
                 return
 
+            # TODO: удали нахуй
+            print(f"Before on_append_response: follower_address={server_address}, term={result.term}, ack={result.ack}, success={result.success}")
             self.on_append_response(follower_address=server_address,
                                     term=result.term,
                                     ack=result.ack,
@@ -236,8 +238,10 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             pass
 
     def __acks(self, length: int):
+        print(f"__acks start. {self.servers}")
         acks = 0
-        for _, address in self.servers:
+        for _, address in self.servers.items():
+            print(f"Loop in __acks. {address}")
             if self.acked_length[address] >= length:
                 acks += 1
         return acks
@@ -246,11 +250,14 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def commit_log_entries(self):
         min_acks = int(math.ceil((len(self.servers) + 1) / 2))
         ready = []
-        for length in range(1, len(self.logs)):
+        for length in range(1, len(self.logs) + 1):
+            print(f"Loop in commit_log_entries. {length}")
             if self.__acks(length) >= min_acks:
                 ready.append(length)
+        print(f"min_acks: {min_acks}, ready: {ready}, log: {self.logs}")
         if len(ready) > 0 and max(ready) > self.commit_length and self.logs[max(ready) - 1].term == self.current_term:
-            for i in range(self.commit_length, max(ready) - 1):
+            print("IF in commit_log_entries")
+            for i in range(self.commit_length, max(ready)):
                 key_value = self.logs[i].keyValue
                 self.data[key_value.key] = key_value.value
             self.commit_length = max(ready)
@@ -259,6 +266,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
     def on_append_response(self, follower_address: str, term: int, ack: int, success: bool):
         if term == self.current_term and self.state == "leader":
             if success:
+                print(f"In on_append_response after success. term: {term}, current_term: {self.current_term}, state: {self.state}")
                 self.sent_length[follower_address] = ack
                 self.acked_length[follower_address] = ack
                 self.commit_log_entries()
@@ -277,11 +285,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 self.logs = self.logs[:log_length-1]
 
         if log_length + len(entries) > len(self.logs):
-            for i in range(len(self.logs) - log_length, len(entries) - 1):
+            for i in range(len(self.logs) - log_length, len(entries)):
                 self.logs.append(entries[i])
 
         if leader_commit > self.commit_length:
-            for i in range(self.commit_length, leader_commit - 1):
+            for i in range(self.commit_length, leader_commit):
                 key_value: KeyValue = self.logs[i].keyValue
                 self.data[key_value.key] = key_value.value  # deliver
             self.commit_length = leader_commit
@@ -314,6 +322,13 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
     # todo ready
     def AppendEntries(self, request: AppendRequest, context):
+        entries = request.entries
+        str_entries = []
+        for entry in entries:
+            str_entries.append((entry.keyValue.key, entry.keyValue.value))
+
+        print(f"Heartbeat from {request.leaderId}. Entries: {str_entries}")
+
         leader_id = request.leaderId
         term = request.leaderTerm
         log_length = request.prevLogIndex
@@ -321,6 +336,8 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         leader_commit = request.leaderCommitIndex
         entries: [LogEntry] = request.entries
 
+        self.leader_id = leader_id
+        self.leader_address = self.servers[leader_id]
         try:
             if self.state == "follower":
                 self.election_timer.cancel()
@@ -338,10 +355,9 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                     log_ok = log_term == self.logs[-1].term
 
             if term == self.current_term and log_ok:
-                self.leader_id = leader_id
-                self.leader_address = self.servers[leader_id]
                 # if self.state != "follower":
                 #     self.start_following()
+                print(f"Appending logs. log_length={log_length}, leader_commit={leader_commit}, entries={entries}")
                 self.append_logs(log_length, leader_commit, entries)
                 ack = log_length + len(entries)
                 return AppendResponse(term=self.current_term, success=True, ack=ack)
@@ -369,6 +385,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
             self.acked_length[self.server_address] = len(self.logs)
+            print(f"After SetVal. log: {self.logs}")
             return SetValResponse(success=True)
         else:
             client_stub = get_service_stub(self.leader_address)
