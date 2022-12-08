@@ -233,7 +233,7 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             pass
 
     def __acks(self, length: int):
-        acks = 0
+        acks = 1  # leader acks its changes
         for _, address in self.servers.items():
             if self.acked_length[address] >= length:
                 acks += 1
