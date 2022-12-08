@@ -160,7 +160,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         except Exception:
             pass
 
-    # todo ready
     def start_leading(self):
         print(f"I am a leader. Term: {self.current_term}")
         self.election_timer.cancel()
@@ -170,7 +169,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
 
         for _, server_address in self.servers.items():
             self.sent_length[server_address] = len(self.logs)
-            # todo todo todo
             self.acked_length[server_address] = 0
 
         self.leader_timer = RepeatTimer(HEARTBEAT_INTERVAL / 1000, function=self.send_heartbeats)
@@ -198,7 +196,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 return
             thread.join()
 
-    # todo ready
     def send_heartbeat(self, server_address):
         client_stub = get_service_stub(server_address)
 
@@ -227,8 +224,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 self.state = "follower"
                 return
 
-            # TODO: удали нахуй
-            print(f"Before on_append_response: follower_address={server_address}, term={result.term}, ack={result.ack}, success={result.success}")
             self.on_append_response(follower_address=server_address,
                                     term=result.term,
                                     ack=result.ack,
@@ -238,35 +233,27 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
             pass
 
     def __acks(self, length: int):
-        print(f"__acks start. {self.servers}")
         acks = 0
         for _, address in self.servers.items():
-            print(f"Loop in __acks. {address}")
             if self.acked_length[address] >= length:
                 acks += 1
         return acks
 
-    # todo ready
     def commit_log_entries(self):
         min_acks = int(math.ceil((len(self.servers) + 1) / 2))
         ready = []
         for length in range(1, len(self.logs) + 1):
-            print(f"Loop in commit_log_entries. {length}")
             if self.__acks(length) >= min_acks:
                 ready.append(length)
-        print(f"min_acks: {min_acks}, ready: {ready}, log: {self.logs}")
         if len(ready) > 0 and max(ready) > self.commit_length and self.logs[max(ready) - 1].term == self.current_term:
-            print("IF in commit_log_entries")
             for i in range(self.commit_length, max(ready)):
                 key_value = self.logs[i].keyValue
                 self.data[key_value.key] = key_value.value
             self.commit_length = max(ready)
 
-    # todo ready
     def on_append_response(self, follower_address: str, term: int, ack: int, success: bool):
         if term == self.current_term and self.state == "leader":
             if success:
-                print(f"In on_append_response after success. term: {term}, current_term: {self.current_term}, state: {self.state}")
                 self.sent_length[follower_address] = ack
                 self.acked_length[follower_address] = ack
                 self.commit_log_entries()
@@ -294,7 +281,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                 self.data[key_value.key] = key_value.value  # deliver
             self.commit_length = leader_commit
 
-    # todo ready
     def RequestVote(self, request, context):
         candidate_term = request.candidateTerm
         candidate_id = request.candidateId
@@ -320,14 +306,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         else:
             return VoteResponse(term=self.current_term, result=False)
 
-    # todo ready
     def AppendEntries(self, request: AppendRequest, context):
         entries = request.entries
         str_entries = []
         for entry in entries:
             str_entries.append((entry.keyValue.key, entry.keyValue.value))
-
-        print(f"Heartbeat from {request.leaderId}. Entries: {str_entries}")
 
         leader_id = request.leaderId
         term = request.leaderTerm
@@ -355,9 +338,6 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
                     log_ok = log_term == self.logs[-1].term
 
             if term == self.current_term and log_ok:
-                # if self.state != "follower":
-                #     self.start_following()
-                print(f"Appending logs. log_length={log_length}, leader_commit={leader_commit}, entries={entries}")
                 self.append_logs(log_length, leader_commit, entries)
                 ack = log_length + len(entries)
                 return AppendResponse(term=self.current_term, success=True, ack=ack)
@@ -379,13 +359,11 @@ class RaftElectionService(pb_grpc.RaftElectionServiceServicer):
         print(f"{node_id} {node_address}")
         return GetLeaderResponse(nodeId=node_id, nodeAddress=node_address)
 
-    # todo ready
     def SetVal(self, request: KeyValue, context):
         if self.state == "leader":
             log_entry = LogEntry(keyValue=request, term=self.current_term)
             self.logs.append(log_entry)
             self.acked_length[self.server_address] = len(self.logs)
-            print(f"After SetVal. log: {self.logs}")
             return SetValResponse(success=True)
         else:
             client_stub = get_service_stub(self.leader_address)
@@ -465,11 +443,11 @@ class SuspendableRaftElectionService(RaftElectionService):
             return func(request, context)
 
 
-def configure_server(server_addr: str, server_id: int, other_servers_addrs: [str]):
+def configure_server(server_addr: str, server_id: int, other_servers_addresses: [str]):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     server.add_insecure_port(server_addr)
     print(f"The server starts at {server_addr}")
-    service = SuspendableRaftElectionService(server_id, server_addr, other_servers_addrs)
+    service = SuspendableRaftElectionService(server_id, server_addr, other_servers_addresses)
     pb_grpc.add_RaftElectionServiceServicer_to_server(
         service,
         server
@@ -496,7 +474,7 @@ def start_server() -> None:
 
     service, server = configure_server(server_addr=needed_server_address,
                                        server_id=needed_server_id,
-                                       other_servers_addrs=servers)
+                                       other_servers_addresses=servers)
 
     try:
         server.start()
